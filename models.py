@@ -10,7 +10,8 @@ class TBN(nn.Module):
                  base_model='resnet101', new_length=None,
                  consensus_type='avg', before_softmax=True,
                  dropout=0.8,
-                 crop_num=1, midfusion='concat'):
+                 crop_num=1, midfusion='concat'
+                 skip_modalities=[]):
         super(TBN, self).__init__()
         self.num_class = num_class
         self.modality = modality
@@ -22,7 +23,7 @@ class TBN(nn.Module):
         self.midfusion = midfusion
         if not before_softmax and consensus_type != 'avg':
             raise ValueError("Only avg consensus can be used after Softmax")
-
+        self.skip_modalities = skip_modalities
         self.new_length = OrderedDict()
         if new_length is None:
             for m in self.modality:
@@ -154,23 +155,26 @@ TSN Configurations:
     def forward(self, input):
         concatenated = []
         # Get the output for each modality
-        for m in self.modality:
-            if (m == 'RGB'):
-                channel = 3
-            elif (m == 'Flow'):
-                channel = 2
-            elif (m == 'Spec'):
-                channel = 1
-            sample_len = channel * self.new_length[m]
+        if m in self.skip_modalities:
+            base_out = None
+        else:   
+            for m in self.modality:
+                if (m == 'RGB'):
+                    channel = 3
+                elif (m == 'Flow'):
+                    channel = 2
+                elif (m == 'Spec'):
+                    channel = 1
+                sample_len = channel * self.new_length[m]
 
-            if m == 'RGBDiff':
-                sample_len = 3 * self.new_length[m]
-                input[m] = self._get_diff(input[m])
-            base_model = getattr(self, m.lower())
-            base_out = base_model(input[m].view((-1, sample_len) + input[m].size()[-2:]))
+                if m == 'RGBDiff':
+                    sample_len = 3 * self.new_length[m]
+                    input[m] = self._get_diff(input[m])
+                base_model = getattr(self, m.lower())
+                base_out = base_model(input[m].view((-1, sample_len) + input[m].size()[-2:]))
 
-            base_out = base_out.view(base_out.size(0), -1)
-            concatenated.append(base_out)
+                base_out = base_out.view(base_out.size(0), -1)
+        concatenated.append(base_out)
 
         output = self.fusion_classification_net(concatenated)
         
