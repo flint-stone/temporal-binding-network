@@ -14,12 +14,12 @@ from transforms import *
 import pickle
 
 
-def average_crops(results, num_crop, num_class):
+def average_crops(results, num_crop, num_class, batch):
 
     return results.cpu().numpy()\
-              .reshape((num_crop, args.test_segments, num_class))\
+              .reshape((num_crop, batch, args.test_segments, num_class))\
               .mean(axis=0)\
-              .reshape((args.test_segments, 1, num_class))
+              .reshape((batch, args.test_segments, 1, num_class))
 
 
 def eval_video(data, net, num_class, device):
@@ -27,14 +27,13 @@ def eval_video(data, net, num_class, device):
 
     for m in args.modality:
         data[m] = data[m].to(device)
-
+    
     rst = net(data)
-
     if 'epic' not in args.dataset:
-        return average_crops(rst, num_crop, num_class)
+        return average_crops(rst, num_crop, num_class, args.batch)
     else:
-        return {'verb': average_crops(rst[0], num_crop, num_class[0]),
-                'noun': average_crops(rst[1], num_crop, num_class[1])}
+        return {'verb': average_crops(rst[0], num_crop, num_class[0], args.batch),
+                'noun': average_crops(rst[1], num_crop, num_class[1], args.batch)}
 
 
 def evaluate_model(num_class):
@@ -47,14 +46,16 @@ def evaluate_model(num_class):
               dropout=args.dropout,
               midfusion=args.midfusion)
 
-    weights = '{weights_dir}/model_best.pth.tar'.format(
+    # weights = '{weights_dir}/model_best.pth.tar'.format(
+    #     weights_dir=args.weights_dir)
+    weights = '{weights_dir}'.format(
         weights_dir=args.weights_dir)
     checkpoint = torch.load(weights)
     print("model epoch {} best prec@1: {}".format(checkpoint['epoch'], checkpoint['best_prec1']))
-
+    
     base_dict = {'.'.join(k.split('.')[1:]): v for k,v in list(checkpoint['state_dict'].items())}
     net.load_state_dict(base_dict)
-
+    
     test_transform = {}
     image_tmpl = {}
     for m in args.modality:
@@ -85,11 +86,9 @@ def evaluate_model(num_class):
             elif m == 'Flow':
                 image_tmpl[m] = args.flow_prefix + "{}_{:010d}.jpg"
         else:
-
             test_transform[m] = torchvision.transforms.Compose([
                 Stack(roll=args.arch == 'BNInception'),
                 ToTorchFormatTensor(div=False), ])
-
 
     data_length = net.new_length
 
@@ -105,10 +104,11 @@ def evaluate_model(num_class):
                    mode='test',
                    transform=test_transform,
                    resampling_rate=args.resampling_rate),
-        batch_size=1, shuffle=False,
+        batch_size=args.batch, shuffle=False,
         num_workers=args.workers * 2)
 
-    net = torch.nn.DataParallel(net, device_ids=args.gpus).to(device)
+    # net = torch.nn.DataParallel(net, device_ids=args.gpus).to(device)
+    net = net.to(device)
     with torch.no_grad():
         net.eval()
 
@@ -117,27 +117,33 @@ def evaluate_model(num_class):
 
         proc_start_time = time.time()
         max_num = args.max_num if args.max_num > 0 else total_num
-        for i, (data, label, meta) in enumerate(test_loader):
-            if i >= max_num:
+        i = 0
+        for (data, label, meta) in test_loader:
+            if i >= args.max_num:
                 break
             rst = eval_video(data, net, num_class, device)
-
+            
             if 'epic' not in args.dataset:
-                label_ = label.item()
-                results.append((rst, label_))
+                for i, r in enumerate(rst):
+                    label_ = label.item()
+                    results.append((rst, label_))
             else:
-                label_ = {k: v.item() for k, v in label.items()}
-                results.append((rst, label_, meta))
-
+                # converted = {k: v.tolist() for k, v in label.items()}
+                # print(f"label {label.items()} converted {converted.items()} rst {rst.size()} i {i}")
+                for batch_idx in range(args.batch):
+                    r = {k: v[batch_idx] for k, v in rst.items()}
+                    label_ = {k: v.tolist()[batch_idx] for k, v in label.items()}
+                    #print(f"label_ {label_} r {r['verb'].shape}")
+                    results.append((r, label_, meta))
             cnt_time = time.time() - proc_start_time
             print('video {} done, total {}/{}, average {} sec/video'.format(
                 i, i + 1, total_num, float(cnt_time) / (i + 1)))
+            i += args.batch
 
         return results
 
 
 def print_accuracy(scores, labels):
-
     video_pred = [np.argmax(np.mean(score, axis=0)) for score in scores]
     cf = confusion_matrix(labels, video_pred).astype(float)
     cls_cnt = cf.sum(axis=1)
@@ -198,6 +204,7 @@ def main():
     parser.add_argument('--gpus', nargs='+', type=int, default=None)
     parser.add_argument('--flow_prefix', type=str, default='')
     parser.add_argument('--resampling_rate', type=int, default=24000)
+    parser.add_argument('--batch', type=int, default=2)
     parser.add_argument('--midfusion', choices=['concat', 'gating_concat', 'multimodal_gating'],
                         default='concat')
 

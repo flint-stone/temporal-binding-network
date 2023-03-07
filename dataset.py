@@ -139,7 +139,6 @@ class TBNDataSet(data.Dataset):
 
         input = {}
         record = self.video_list[index]
-
         for m in self.modality:
             if self.mode == 'train':
                 segment_indices = self._sample_indices(record, m)
@@ -163,11 +162,10 @@ class TBNDataSet(data.Dataset):
 
             if m != 'RGB' and self.mode == 'train':
                 np.random.shuffle(segment_indices)
-
-            img, label = self.get(m, record, segment_indices)
+            img, label, meta = self.get(m, record, segment_indices)
             input[m] = img
 
-        return input, label
+        return input, label, meta
 
     def get(self, modality, record, indices):
 

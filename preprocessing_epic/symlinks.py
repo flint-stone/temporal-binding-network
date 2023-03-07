@@ -25,12 +25,13 @@ if __name__ == '__main__':
 
             frames_dir = participant_dir / modality
             for source_file in frames_dir.glob(video_id_pattern):
+                print(f"symlinks {args.symlinks_dir} source_file {source_file} splitted {str(source_file).split('/')}")
                 if modality == 'rgb_frames':
-                    video = str(source_file).split('/')[-1:]
+                    [videos] = str(source_file).split('/')[-1:]
                 else:
-                    video, _ = str(source_file).split('/')[-2:]
-
-                link_path = args.symlinks_dir / video
+                    [videos, _] = str(source_file).split('/')[-2:]
+                   
+                link_path = args.symlinks_dir / videos
                 if not link_path.exists():
                     link_path.mkdir(parents=True)
 
